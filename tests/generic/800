@@ -1,0 +1,68 @@
+#! /bin/bash
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (c) 2024 Meta Platforms, Inc.  All Rights Reserved.
+#
+# FS QA Test 800
+#
+# Validate the pre-content related fanotify features
+#
+# The mmap-verify pre-content tool generates a file and then validates that the
+# pre-content watched directory properly fills it in with a mixture of page
+# faults and normal reads.
+#
+. ./common/preamble
+_begin_fstest quick auto fsnotify 
+
+_cleanup()
+{
+	cd /
+	rm -rf $TEST_DIR/dst-$seq
+	rm -rf $TEST_DIR/src-$seq
+}
+
+# real QA test starts here
+_supported_fs generic
+_require_test
+_require_test_program "precontent/mmap-validate"
+_require_test_program "precontent/populate"
+_require_test_program "precontent/remote-fetch"
+
+dstdir=$TEST_DIR/dst-$seq
+srcdir=$TEST_DIR/src-$seq
+
+POPULATE=$here/src/precontent/populate
+REMOTE_FETCH=$here/src/precontent/remote-fetch
+MMAP_VALIDATE=$here/src/precontent/mmap-validate
+
+mkdir $dstdir $srcdir
+
+# Generate the test file
+$MMAP_VALIDATE create $srcdir/validate
+
+# Generate the stub file in the watch directory
+$POPULATE $srcdir $dstdir
+
+# Start the remote watcher
+$REMOTE_FETCH $srcdir $dstdir &
+
+FETCH_PID=$!
+
+# We may not support fanotify, give it a second to start and then make sure the
+# fetcher is running before we try to validate the buffer
+sleep 1
+
+if ! ps -p $FETCH_PID > /dev/null
+then
+	_notrun "precontent watches not supported"
+fi
+
+$MMAP_VALIDATE validate $dstdir/validate
+
+kill -9 $FETCH_PID &> /dev/null
+wait $FETCH_PID &> /dev/null
+
+echo "Silence is golden"
+
+# success, all done
+status=$?
+exit
